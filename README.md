@@ -1,38 +1,53 @@
 # lite-streaming-client
 
-A lightweight, minimal RTSP client library written in C++17. Designed for learning and embedding into larger projects.
+A lightweight streaming media library written in C++17 **for learning purposes**.
+
+The goal is to understand and implement streaming protocols (RTSP, RTMP, WebRTC, etc.) **from scratch without using FFmpeg**, making it easier to learn the underlying mechanisms of streaming media.
 
 Inspired by [ZLMediaKit](https://github.com/ZLMediaKit/ZLMediaKit).
 
+## Why This Project?
+
+- **Learning-oriented**: Clean, readable code to understand how streaming protocols work
+- **No FFmpeg dependency**: Implement protocols from scratch for deeper understanding
+- **Minimal design**: Focus on core concepts without complex abstractions
+
 ## Features
 
-- RTSP/1.0 protocol implementation
-- Digest authentication support
-- RTP over TCP (interleaved mode)
-- RingBuffer with GOP caching
-- Single-header style, easy to integrate
-- No external dependencies (except OpenSSL for MD5)
+### Currently Supported
+- [x] RTSP/1.0 client (pull stream)
+- [x] Digest authentication
+- [x] RTP over TCP (interleaved mode)
+- [x] RingBuffer with GOP caching
+
+### Planned
+- [ ] RTMP client
+- [ ] RTMP server
+- [ ] WebRTC support
+- [ ] RTP over UDP
+- [ ] H.264/H.265 depacketization
+- [ ] Protocol conversion (RTSP to RTMP, etc.)
 
 ## Architecture
 
 ```
 +---------------------------------------------------+
-|                   RtspClient                      |
+|              lite-streaming-client                |
 +---------------------------------------------------+
-|  TcpClient (async TCP connection)                 |
-|       |                                           |
-|       v                                           |
-|  RtspSplitter (separate RTSP response / RTP)      |
-|       |                                           |
-|       v                                           |
-|  RtpPacket (parse RTP header)                     |
-|       |                                           |
-|       v                                           |
-|  RingBuffer (GOP-based frame caching)             |
+|                                                   |
+|  +-------------+  +-------------+  +------------+ |
+|  | RtspClient  |  | RtmpClient  |  | WebRTC     | |
+|  +------+------+  +------+------+  +-----+------+ |
+|         |                |               |        |
+|         v                v               v        |
+|  +---------------------------------------------+  |
+|  |              RingBuffer (GOP Cache)         |  |
+|  +---------------------------------------------+  |
+|                                                   |
 +---------------------------------------------------+
 ```
 
-## RTSP Handshake Flow
+## RTSP Flow
 
 ```
 Client                          Server
@@ -52,7 +67,6 @@ Client                          Server
    |<-- 200 OK --------------------|
    |                               |
    |<== RTP Packets ===============|
-   |              ...              |
 ```
 
 ## Quick Start
@@ -80,11 +94,11 @@ int main() {
     auto client = std::make_shared<RtspClient>();
     
     client->setOnPlayResult([](bool ok, const std::string& msg) {
-        std::cout << "Play: " << (ok ? "Success" : "Failed") << " - " << msg << std::endl;
+        std::cout << "Play: " << (ok ? "Success" : "Failed") << std::endl;
     });
     
     client->getRing()->setOnData([](const RtpPacket::Ptr& pkt) {
-        std::cout << "RTP seq=" << pkt->seq << " size=" << pkt->payload.size() << std::endl;
+        std::cout << "RTP seq=" << pkt->seq << std::endl;
     });
     
     client->play("rtsp://admin:123456@192.168.1.64:554/stream");
@@ -99,10 +113,9 @@ int main() {
 ## Project Structure
 
 ```
-lite-rtsp-client/
+lite-streaming-client/
 ├── CMakeLists.txt
 ├── README.md
-├── LICENSE
 └── src/
     ├── main.cpp
     ├── network/
@@ -118,23 +131,15 @@ lite-rtsp-client/
 ## Dependencies
 
 - C++17
-- OpenSSL (for MD5 in Digest authentication)
+- OpenSSL (for MD5)
 - POSIX sockets (Linux/macOS)
-
-## Roadmap
-
-- [ ] RTMP client support
-- [ ] RTP over UDP
-- [ ] RTCP handling
-- [ ] H.264 depacketization (RTP to NAL units)
-- [ ] Cross-platform (Windows support)
 
 ## References
 
-- [ZLMediaKit](https://github.com/ZLMediaKit/ZLMediaKit) - Inspiration source
-- [RFC 2326](https://tools.ietf.org/html/rfc2326) - RTSP Protocol
-- [RFC 3550](https://tools.ietf.org/html/rfc3550) - RTP Protocol
-- [RFC 2617](https://tools.ietf.org/html/rfc2617) - HTTP Digest Authentication
+- [ZLMediaKit](https://github.com/ZLMediaKit/ZLMediaKit)
+- [RFC 2326 - RTSP](https://tools.ietf.org/html/rfc2326)
+- [RFC 3550 - RTP](https://tools.ietf.org/html/rfc3550)
+- [RFC 2617 - HTTP Authentication](https://tools.ietf.org/html/rfc2617)
 
 ## License
 
