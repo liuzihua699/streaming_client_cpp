@@ -8,25 +8,45 @@
 #include <map>
 #include <openssl/md5.h>
 
+using namespace toolkit;
+
 class RtspClient : public TcpClient {
 public:
     using Ptr = std::shared_ptr<RtspClient>;
     using RingType = RingBuffer<RtpPacket::Ptr>;
 
+    RtspClient() {
+        _ring = std::make_shared<RingType>();
+    }
+
     void play(const std::string& url) {
         parseUrl(url);
         _splitter.setOnResponse([this](const std::string& r) { onRtspResponse(r); });
         _splitter.setOnRtp([this](const char* d, size_t l, int t) { onRtpPacket(d, l, t); });
-        connect(_host, _port);
+        startConnect(_host, _port);
     }
 
     RingType::Ptr getRing() { return _ring; }
     void setOnPlayResult(std::function<void(bool, const std::string&)> cb) { _on_result = cb; }
 
 protected:
-    void onConnect() override { sendOptions(); }
-    void onRecv(const char* data, size_t len) override { _splitter.input(data, len); }
-    void onDisconnect() override { if (_on_result) _on_result(false, "Disconnected"); }
+    void onConnect(const SockException& ex) override {
+        if (ex) {
+            fprintf(stderr, "Connect failed: %s\n", ex.what());
+            if (_on_result) _on_result(false, ex.what());
+            return;
+        }
+        fprintf(stderr, "Connected to %s:%d\n", _host.c_str(), _port);
+        sendOptions();
+    }
+
+    void onRecv(const Buffer::Ptr& buf) override {
+        _splitter.input(buf->data(), buf->size());
+    }
+
+    void onError(const SockException& ex) override {
+        if (_on_result) _on_result(false, ex.what());
+    }
 
 private:
     void parseUrl(const std::string& url) {
@@ -65,22 +85,8 @@ private:
         unsigned char digest[16];
         MD5((unsigned char*)str.c_str(), str.size(), digest);
         char hex[33];
-        for (int i = 0; i < 16; i++) sprintf(hex + i*2, "%02x", digest[i]);
+        for (int i = 0; i < 16; i++) sprintf(hex + i * 2, "%02x", digest[i]);
         return hex;
-    }
-
-    static std::string escapeString(const std::string& s) {
-        std::string result;
-        for (char c : s) {
-            if (c == '\r') {
-                result += "\\r";
-            } else if (c == '\n') {
-                result += "\\n\n";  // 换行后真换一行方便看
-            } else {
-                result += c;
-            }
-        }
-        return result;
     }
 
     bool handleAuthenticationFailure(const std::string& params) {
@@ -118,6 +124,16 @@ private:
         return "";
     }
 
+    static std::string escapeString(const std::string& s) {
+        std::string out;
+        for (char c : s) {
+            if (c == '\r') out += "\\r";
+            else if (c == '\n') out += "\\n\n";
+            else out += c;
+        }
+        return out;
+    }
+
     void sendRequest(const std::string& method, const std::string& url,
                      const std::map<std::string, std::string>& extra = {}) {
         std::ostringstream ss;
@@ -143,7 +159,9 @@ private:
     void sendPlay()     { _state = PLAY;     sendRequest("PLAY", _play_url, {{"Range", "npt=0.000-"}}); }
 
     void onRtspResponse(const std::string& resp) {
-        fprintf(stderr, "<<< RECV (%zu bytes):\n%s\n", resp.size(), escapeString(resp).c_str());        int status = 0;
+        fprintf(stderr, "<<< RECV (%zu bytes):\n%s\n", resp.size(), escapeString(resp).c_str());
+
+        int status = 0;
         sscanf(resp.c_str(), "RTSP/1.0 %d", &status);
 
         std::string auth_info;
@@ -184,7 +202,11 @@ private:
 
         switch (_state) {
             case OPTIONS:  sendDescribe(); break;
-            case DESCRIBE: parseSdp(resp); sendSetup(); break;
+            case DESCRIBE:
+                parseSdp(resp);
+                fprintf(stderr, "Control URL: %s\n", _control.c_str());
+                sendSetup();
+                break;
             case SETUP:    sendPlay(); break;
             case PLAY:
                 _splitter.enableRtp(true);
@@ -194,7 +216,6 @@ private:
     }
 
     void parseSdp(const std::string& resp) {
-        // 找Content-Base或使用_play_url作为基础
         std::string base = _play_url;
         size_t pos = resp.find("Content-Base:");
         if (pos != std::string::npos) {
@@ -205,10 +226,9 @@ private:
             if (!base.empty() && base.back() == '/') base.pop_back();
         }
 
-        // 找视频track的control（m=video之后的a=control）
         pos = resp.find("m=video");
         if (pos == std::string::npos) {
-            pos = resp.find("m=audio");  // 没视频找音频
+            pos = resp.find("m=audio");
         }
 
         if (pos != std::string::npos) {
@@ -222,15 +242,13 @@ private:
                     _control = ctrl;
                 } else if (ctrl == "*") {
                     _control = base;
-                } else if (ctrl[0] == '/') {
-                    // 绝对路径
+                } else if (!ctrl.empty() && ctrl[0] == '/') {
                     size_t p = base.find("://");
                     std::string hostpart = base.substr(0, p + 3);
                     std::string rest = base.substr(p + 3);
                     p = rest.find('/');
                     _control = hostpart + rest.substr(0, p) + ctrl;
                 } else {
-                    // 相对路径
                     _control = base + "/" + ctrl;
                 }
             } else {
@@ -239,8 +257,6 @@ private:
         } else {
             _control = base;
         }
-
-        std::cout << "Control URL: " << _control << std::endl;
     }
 
     void onRtpPacket(const char* data, size_t len, int track) {
@@ -253,17 +269,15 @@ private:
 
     std::string _url;
     std::string _play_url;
-    std::string _host;
     std::string _user;
     std::string _password;
     std::string _session;
     std::string _control;
     std::string _realm;
     std::string _nonce;
-    uint16_t _port = 554;
     int _cseq = 0;
 
     RtspSplitter _splitter;
-    RingType::Ptr _ring = std::make_shared<RingType>();
+    RingType::Ptr _ring;
     std::function<void(bool, const std::string&)> _on_result;
 };
