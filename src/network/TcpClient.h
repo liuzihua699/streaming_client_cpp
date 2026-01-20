@@ -29,7 +29,7 @@ public:
      * @param port 服务器端口
      * @param timeout_sec 超时时间（秒）
      */
-    virtual void startConnect(const std::string& host, uint16_t port, float timeout_sec = 5.0f) {
+    void startConnect(const std::string& host, uint16_t port, float timeout_sec = 5.0f) {
         shutdown();
 
         _host = host;
